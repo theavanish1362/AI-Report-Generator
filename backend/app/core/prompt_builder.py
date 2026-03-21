@@ -6,7 +6,7 @@ class PromptBuilder:
     Builds structured prompts for the LLM to generate technical report content.
     """
     
-    def build_prompt(self, title: str, project_type: str, description: str) -> str:
+    def build_prompt(self, title: str, project_type: str, description: str, pages: int) -> str:
         """
         Convert user input into a structured technical report instruction.
         
@@ -14,6 +14,7 @@ class PromptBuilder:
             title: Project title
             project_type: Either 'academic' or 'industrial'
             description: Detailed project description
+            pages: Approximate number of pages desired
             
         Returns:
             Formatted prompt string for LLM
@@ -24,6 +25,7 @@ You are an expert technical report writer. Generate a comprehensive {project_typ
 TITLE: {title}
 PROJECT TYPE: {project_type}
 DESCRIPTION: {description}
+TARGET LENGTH: Approximately {pages} pages (A4, 11pt body text)
 
 Generate a complete technical report with the following sections in JSON format. Each section should be concise and professional:
 
@@ -45,7 +47,7 @@ Generate a complete technical report with the following sections in JSON format.
     ]
 }}
 
-Ensure the total content length corresponds to approximately 8-10 pages when formatted.
+Ensure the total content length corresponds to approximately {pages} pages when formatted.
 Make the content realistic, technical, and professional.
 """
         return prompt.strip()

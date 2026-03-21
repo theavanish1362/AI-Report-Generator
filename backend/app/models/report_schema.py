@@ -9,6 +9,7 @@ class ReportRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200, description="Project title")
     project_type: str = Field(..., description="Type of project: academic or industrial")
     description: str = Field(..., min_length=10, max_length=5000, description="Detailed project description")
+    pages: int = Field(15, ge=5, le=30, description="Approximate number of pages to generate (5-30)")
     
     @validator('project_type')
     def validate_project_type(cls, v):

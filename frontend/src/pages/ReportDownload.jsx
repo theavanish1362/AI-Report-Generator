@@ -1,5 +1,5 @@
 // ai-report-generator/frontend/src/pages/ReportDownload.js
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -16,11 +16,6 @@ const ReportDownload = () => {
   const navigate = useNavigate();
   const [downloading, setDownloading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
-
-  useEffect(() => {
-    handleDownload();
-    // eslint-disable-next-line
-  }, []);
 
   const handleDownload = async () => {
     setDownloading(true);

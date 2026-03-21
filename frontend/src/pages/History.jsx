@@ -48,6 +48,7 @@ const History = () => {
       toast.success("Report deleted successfully");
     } catch (error) {
       toast.error("Failed to delete report");
+      console.error(error);
     }
   };
 

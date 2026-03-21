@@ -14,12 +14,14 @@ const ReportGenerator = () => {
     defaultValues: {
       title: '',
       project_type: 'academic',
-      description: ''
+      description: '',
+      pages: 15,
     }
   });
 
   const projectType = watch('project_type');
   const descriptionLength = watch('description')?.length || 0;
+  const pages = watch('pages') || 15;
 
   const onSubmit = async (data) => {
     setLoading(true);
@@ -48,7 +50,7 @@ const ReportGenerator = () => {
             Generate Professional AI Report
           </h1>
           <p className="text-lg text-gray-600">
-            Convert your project idea into a polished 15-20 page PDF report
+            Convert your project idea into a polished ~{pages}-page PDF report
           </p>
         </div>
 
@@ -85,34 +87,37 @@ const ReportGenerator = () => {
                 {[
                   { type: 'academic', icon: BookOpen, label: 'Academic', desc: 'Research & university projects' },
                   { type: 'industrial', icon: Briefcase, label: 'Industrial', desc: 'Business & startup projects' }
-                ].map(({ type, icon: Icon, label, desc }) => (
-                  <label
-                    key={type}
-                    className={`cursor-pointer rounded-xl border p-4 transition ${
-                      projectType === type
-                        ? 'border-blue-600 bg-blue-50'
-                        : 'border-gray-200 bg-white hover:bg-blue-50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      value={type}
-                      {...register('project_type')}
-                      className="sr-only"
-                    />
-                    <div className="flex gap-3">
-                      <Icon
-                        className={`h-5 w-5 ${
-                          projectType === type ? 'text-blue-600' : 'text-gray-400'
-                        }`}
+                ].map(({ type, icon, label, desc }) => {
+                  const Icon = icon;
+                  return (
+                    <label
+                      key={type}
+                      className={`cursor-pointer rounded-xl border p-4 transition ${
+                        projectType === type
+                          ? 'border-blue-600 bg-blue-50'
+                          : 'border-gray-200 bg-white hover:bg-blue-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        value={type}
+                        {...register('project_type')}
+                        className="sr-only"
                       />
-                      <div>
-                        <p className="font-medium text-gray-900">{label}</p>
-                        <p className="text-sm text-gray-500">{desc}</p>
+                      <div className="flex gap-3">
+                        <Icon
+                          className={`h-5 w-5 ${
+                            projectType === type ? 'text-blue-600' : 'text-gray-400'
+                          }`}
+                        />
+                        <div>
+                          <p className="font-medium text-gray-900">{label}</p>
+                          <p className="text-sm text-gray-500">{desc}</p>
+                        </div>
                       </div>
-                    </div>
-                  </label>
-                ))}
+                    </label>
+                  );
+                })}
               </div>
             </div>
 
@@ -133,6 +138,31 @@ const ReportGenerator = () => {
                   {descriptionLength}/5000
                 </span>
               </div>
+            </div>
+
+            {/* Pages */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Number of Pages (approx.)
+              </label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="5"
+                  max="30"
+                  step="1"
+                  {...register('pages', { valueAsNumber: true, min: 5, max: 30 })}
+                  className="w-full"
+                />
+                <span className="w-16 text-right text-sm font-semibold text-gray-900">
+                  {pages}
+                </span>
+              </div>
+              {errors.pages && (
+                <p className="text-sm text-red-600 mt-1">
+                  Please choose between 5 and 30 pages
+                </p>
+              )}
             </div>
 
             {/* Submit */}

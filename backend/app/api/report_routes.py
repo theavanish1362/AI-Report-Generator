@@ -36,7 +36,7 @@ async def generate_report(
         # Initialize components
         llm_client = LLMClient()
         prompt_builder = PromptBuilder()
-        content_planner = ContentPlanner()
+        content_planner = ContentPlanner(target_pages=request.pages)
         chart_generator = ChartGenerator()
         pdf_builder = PDFBuilder()
         
@@ -49,7 +49,8 @@ async def generate_report(
         prompt = prompt_builder.build_prompt(
             title=request.title,
             project_type=request.project_type,
-            description=request.description
+            description=request.description,
+            pages=request.pages
         )
         
         llm_response = await llm_client.generate_content(prompt)
@@ -76,7 +77,7 @@ async def generate_report(
             "title": request.title,
             "date": datetime.datetime.now().isoformat(),
             "type": request.project_type,
-            "pages": 5  # Placeholder for page count since it's hard to predict exactly without PDF metadata
+            "pages": request.pages
         }
         metadata_path = os.path.join("generated_reports", f"report_{report_id}.json")
         with open(metadata_path, 'w') as f:
@@ -153,4 +154,4 @@ async def delete_report(report_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="Report not found")
         
-    return {"success": True, "message": "Report deleted successfully"}
+    return {"success": True, "message": "Report deleted successfully"}

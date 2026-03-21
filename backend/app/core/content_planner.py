@@ -24,14 +24,10 @@ class ContentPlanner:
         # Ensure all required sections exist
         content = self._ensure_sections(llm_response)
         
-        # Calculate current total words
+        # Condense only if extremely long; avoid padding with low-quality filler text.
         total_words = self._count_total_words(content)
         target_words = self.target_pages * self.words_per_page
-        
-        # Adjust content if needed
-        if total_words < target_words:
-            content = self._expand_content(content, target_words - total_words)
-        elif total_words > target_words * 1.2:  # Allow 20% overflow
+        if total_words > target_words * 1.2:  # Allow 20% overflow
             content = self._condense_content(content, total_words - target_words)
         
         # Add placeholder markers for charts
@@ -77,24 +73,6 @@ class ContentPlanner:
                         total += len(item.split())
                         
         return total
-    
-    def _expand_content(self, content: Dict[str, Any], additional_words: int) -> Dict[str, Any]:
-        """Expand content by adding more details to each section."""
-        # Distribute additional words proportionally
-        sections = [s for s in content.keys() if s != "charts_needed" and isinstance(content[s], str)]
-        
-        if not sections:
-            return content
-            
-        words_per_section = additional_words // len(sections)
-        
-        for section in sections:
-            if isinstance(content[section], str):
-                # Add more detailed content
-                expansion = f"\n\nFurther analysis reveals that {section} demonstrates significant importance in the overall project context. Additional considerations include scalability, performance optimization, and integration with existing systems. The implementation approach ensures robust handling of edge cases while maintaining high performance standards."
-                content[section] += expansion
-        
-        return content
     
     def _condense_content(self, content: Dict[str, Any], excess_words: int) -> Dict[str, Any]:
         """Condense content by removing redundant information."""

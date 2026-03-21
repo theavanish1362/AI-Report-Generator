@@ -125,9 +125,9 @@ class PDFBuilder:
                 story.append(Spacer(1, 0.3 * inch))
                 self._add_charts_to_story(story, charts)
             
-            # Add page break after each major section except last
+            # Keep sections flowing; avoid forced page breaks so the requested length is achievable.
             if section_key != 'future_scope':
-                story.append(PageBreak())
+                story.append(Spacer(1, 0.2 * inch))
         
         return story
     
