@@ -192,8 +192,8 @@ const ReportGenerator = () => {
             </h3>
             <div className="grid md:grid-cols-2 gap-4">
               {[
-                '15-20 page professional PDF',
-                'AI-generated charts & visuals',
+                `${pages} page professional PDF`,
+                'Technical nested subsections',
                 'Well-structured chapters',
                 'Cover page & table of contents'
               ].map((text, i) => (

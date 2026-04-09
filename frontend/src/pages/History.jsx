@@ -32,11 +32,27 @@ const History = () => {
 
   const handleDownload = async (reportId) => {
     try {
-      await axios.get(`/api/download/${reportId}`, {
+      const response = await axios.get(`/api/download/${reportId}`, {
         responseType: "blob",
       });
+      
+      // Create a URL for the blob
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `report_${reportId}.pdf`); // Force download filename
+      
+      // Append to the document and trigger click
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
       toast.success("Report downloaded successfully!");
-    } catch {
+    } catch (error) {
+      console.error("Download error:", error);
       toast.error("Failed to download report");
     }
   };

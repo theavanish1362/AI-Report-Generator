@@ -28,13 +28,13 @@ class PDFBuilder:
         self.page_width, self.page_height = A4
         self.chart_placeholder = "[CHART]"
         
-    def create_pdf(self, content: Dict[str, Any], charts: List[str], output_path: str):
+    def create_pdf(self, content: Dict[str, Any], images: List[Dict[str, str]], output_path: str):
         """
         Create a complete PDF report.
         
         Args:
             content: Dictionary containing report content sections
-            charts: List of paths to chart images
+            images: List of dicts with 'path' and 'title' for each image
             output_path: Path where PDF will be saved
         """
         try:
@@ -45,8 +45,8 @@ class PDFBuilder:
             doc = SimpleDocTemplate(
                 output_path,
                 pagesize=A4,
-                rightMargin=72,
-                leftMargin=72,
+                rightMargin=54,  # Slightly smaller margins to allow more content per line
+                leftMargin=54,
                 topMargin=72,
                 bottomMargin=72,
                 title=content.get('title', 'Technical Report'),
@@ -54,8 +54,7 @@ class PDFBuilder:
             )
             
             # Build story elements
-            story = self._build_story(content, charts)
-            
+            story = self._build_story(content, images)
             # Build PDF
             doc.build(
                 story,
@@ -68,8 +67,7 @@ class PDFBuilder:
         except Exception as e:
             logger.error(f"PDF generation failed: {e}")
             raise
-    
-    def _build_story(self, content: Dict[str, Any], charts: List[str]) -> List:
+    def _build_story(self, content: Dict[str, Any], images: List[Dict[str, str]]) -> List:
         """Build the story elements for the PDF."""
         story = []
         
@@ -94,8 +92,8 @@ class PDFBuilder:
             ('System Architecture', 'system_architecture'),
             ('Implementation', 'implementation'),
             ('Results & Analysis', 'results_analysis'),
-            ('Conclusion', 'conclusion'),
-            ('Future Scope', 'future_scope')
+            ('Future Scope', 'future_scope'),
+            ('Conclusion', 'conclusion')
         ]
         
         for section_title, section_key in sections:
@@ -107,54 +105,77 @@ class PDFBuilder:
             section_content = content.get(section_key, '')
             
             if isinstance(section_content, list):
-                # Handle list items (objectives, tools)
-                for item in section_content:
-                    bullet_text = f"• {item}"
-                    story.append(Paragraph(bullet_text, self.styles['Normal']))
-                    story.append(Spacer(1, 0.1 * inch))
+                if section_key in ['objectives', 'tools_technologies']:
+                    # Handle flat list items (objectives, tools)
+                    for item in section_content:
+                        bullet_text = f"• {item}"
+                        story.append(Paragraph(bullet_text, self.styles['Normal']))
+                        story.append(Spacer(1, 0.1 * inch))
+                else:
+                    # Handle nested subsections
+                    for sub in section_content:
+                        sub_title = sub.get('sub_title', '') if isinstance(sub, dict) else ''
+                        sub_text = sub.get('content', '') if isinstance(sub, dict) else str(sub)
+                        
+                        if sub_title:
+                            story.append(Paragraph(sub_title, self.styles['Heading2']))
+                            story.append(Spacer(1, 0.1 * inch))
+                            
+                        # Handle paragraph text in subsection
+                        paragraphs = sub_text.split('\n\n')
+                        for para in paragraphs:
+                            if para.strip():
+                                story.append(Paragraph(para, self.styles['Normal']))
+                                story.append(Spacer(1, 0.1 * inch))
+                        story.append(Spacer(1, 0.15 * inch))
             else:
-                # Handle paragraph text
-                paragraphs = section_content.split('\n\n')
+                # Handle plain text paragraph (mostly for abstract)
+                paragraphs = str(section_content).split('\n\n')
                 for para in paragraphs:
                     if para.strip():
                         story.append(Paragraph(para, self.styles['Normal']))
                         story.append(Spacer(1, 0.1 * inch))
             
-            # Add charts to Results & Analysis section
-            if section_key == 'results_analysis' and charts:
+            # Add images to Results & Analysis section
+            if section_key == 'results_analysis' and images:
                 story.append(Spacer(1, 0.3 * inch))
-                self._add_charts_to_story(story, charts)
+                self._add_images_to_story(story, images)
             
-            # Keep sections flowing; avoid forced page breaks so the requested length is achievable.
-            if section_key != 'future_scope':
-                story.append(Spacer(1, 0.2 * inch))
+            story.append(Spacer(1, 0.2 * inch))
+
+            # Add images to relevant sections (usually near results)
+            if section_key == 'results_analysis' and images:
+                story.append(Spacer(1, 0.3 * inch))
+                self._add_images_to_story(story, images)
+            
+            story.append(Spacer(1, 0.2 * inch))
+        
+        return story
         
         return story
     
-    def _add_charts_to_story(self, story: List, charts: List[str]):
-        """Add charts to the story with proper formatting."""
-        chart_index = 0
-        
-        for chart_path in charts:
-            if os.path.exists(chart_path):
+    def _add_images_to_story(self, story: List, images: List[Dict[str, str]]):
+        """Add AI-generated images to the story with proper formatting."""
+        for i, img_data in enumerate(images):
+            img_path = img_data.get("path", "")
+            img_title = img_data.get("title", f"Figure {i + 1}")
+            
+            if img_path and os.path.exists(img_path):
                 try:
-                    # Add chart title
-                    if chart_index == 0:
-                        story.append(Paragraph("Figure 1: Performance Metrics", self.styles['FigureTitle']))
-                    else:
-                        story.append(Paragraph("Figure 2: Growth Trends", self.styles['FigureTitle']))
-                    
+                    # Add figure title
+                    story.append(Paragraph(
+                        f"Figure {i + 1}: {img_title}",
+                        self.styles['FigureTitle']
+                    ))
                     story.append(Spacer(1, 0.1 * inch))
                     
-                    # Add chart image
-                    img = Image(chart_path, width=6*inch, height=4*inch)
+                    # Add image
+                    img = Image(img_path, width=5.5*inch, height=3.7*inch)
                     story.append(img)
-                    
                     story.append(Spacer(1, 0.2 * inch))
-                    chart_index += 1
                     
                 except Exception as e:
-                    logger.error(f"Failed to add chart {chart_path}: {e}")
+                    logger.error(f"Failed to add image {img_path}: {e}")
     
     def _header_footer(self, canvas_obj, doc):
         """Add header and footer to each page."""

@@ -6,48 +6,90 @@ class PromptBuilder:
     Builds structured prompts for the LLM to generate technical report content.
     """
     
+    def build_outline_prompt(self, title: str, project_type: str, description: str, pages: int) -> str:
+        """Phase 1: Generate a comprehensive table of contents with STRICT KEYS."""
+        return f"""
+Act as a Technical Architect. Create an 8-chapter outline for a {pages}-page report on '{title}'.
+PROJECT: {project_type} | DESCRIPTION: {description}
+
+TASK: Return a JSON object with these EXACT keys for your sections:
+[introduction, problem_statement, methodology, system_architecture, implementation, results_analysis, future_scope, conclusion]
+
+OUTPUT FORMAT (JSON ONLY):
+{{
+    "abstract_plan": "Specific strategy for the abstract...",
+    "sections": [
+        {{ "title": "1. [Specific Title]", "key": "introduction", "subsections": ["Sub A", "Sub B"] }},
+        {{ "title": "2. [Specific Title]", "key": "problem_statement", "subsections": ["Sub A", "Sub B"] }},
+        ...
+    ]
+}}
+""".strip()
+
+    def build_section_prompt(self, title: str, section_title: str, subsections: list, target_words: int) -> str:
+        """Phase 2: Generate deep content for a specific chapter."""
+        subs_str = ", ".join(subsections)
+        return f"""
+Write the '{section_title}' chapter for a technical report titled '{title}'.
+SUB-CHAPTERS TO COVER: {subs_str}
+TARGET LENGTH: {target_words} words. (MASSIVE, EXHAUSTIVE TECHNICAL DETAIL REQUIRED).
+
+QUALITY RULES:
+1. Provide deep technical insights and data-driven explanations.
+2. Every sub-chapter MUST have at least 8-10 expansive paragraphs.
+3. Your goal is 1500+ words. If you are brief, you have FAILED.
+4. Each chapter must focus on unique technical aspects to avoid duplicate headings.
+
+OUTPUT JSON FORMAT:
+[
+    {{ "sub_title": "Subsection Title", "content": "1500+ words of granular technical analysis..." }},
+    ...
+]
+""".strip()
+
     def build_prompt(self, title: str, project_type: str, description: str, pages: int) -> str:
         """
         Convert user input into a structured technical report instruction.
-        
-        Args:
-            title: Project title
-            project_type: Either 'academic' or 'industrial'
-            description: Detailed project description
-            pages: Approximate number of pages desired
-            
-        Returns:
-            Formatted prompt string for LLM
         """
+        # Calculate target word density
+        total_target_words = pages * 400
+        words_per_section_avg = total_target_words // 9
+        
         prompt = f"""
-You are an expert technical report writer. Generate a comprehensive {project_type} report with the following title:
+You are an expert technical report writer. Generate a comprehensive {project_type} report.
 
 TITLE: {title}
 PROJECT TYPE: {project_type}
 DESCRIPTION: {description}
-TARGET LENGTH: Approximately {pages} pages (A4, 11pt body text)
+TARGET LENGTH: {pages} pages (Must reach approx. {total_target_words} words total)
 
-Generate a complete technical report with the following sections in JSON format. Each section should be concise and professional:
+### REQUIRED NESTED STRUCTURE EXAMPLE (STRICT JSON ONLY):
+For every major section, use this list-of-objects structure:
+"introduction": [
+    {{"sub_title": "1.1 Project Overview", "content": "3-4 detailed paragraphs discussing X, Y, and Z..."}},
+    {{"sub_title": "1.2 Necessity and Motivation", "content": "3-4 detailed paragraphs discussing A, B, and C..."}}
+]
 
+### JSON SCHEMA TO FOLLOW:
 {{
-    "abstract": "Brief summary of the entire project (100-150 words)",
-    "introduction": "Background and context (150-200 words)",
-    "problem_statement": "Clear problem definition (100-150 words)",
-    "objectives": ["Objective 1", "Objective 2", "Objective 3", ...] (3-4 clear objectives)",
-    "methodology": "Brief approach description (200-250 words)",
-    "tools_technologies": ["Tool/Technology 1", "Tool/Technology 2", ...] (list main tools used)",
-    "system_architecture": "High-level design description (150-200 words)",
-    "implementation": "Key implementation details (200-250 words)",
-    "results_analysis": "Main results and insights (150-200 words)",
-    "conclusion": "Summary of findings (100-150 words)",
-    "future_scope": "Future directions (100-150 words)",
-    "charts_needed": [
-        {{"type": "bar", "title": "Performance Metrics", "data": {{"categories": ["Metric1", "Metric2"], "values": [85, 92]}}}},
-        {{"type": "line", "title": "Growth Trends", "data": {{"x": [1,2,3,4,5], "y": [10,25,45,70,100]}}}}
-    ]
+    "abstract": "Minimum 250 words summary",
+    "introduction": [..nested subsections..],
+    "problem_statement": [..nested subsections..],
+    "objectives": ["Primary...", "Secondary...", "Technical..."],
+    "methodology": [..nested subsections..],
+    "tools_technologies": ["Tool A", "Tool B", "Env C"],
+    "system_architecture": [..nested subsections..],
+    "implementation": [..nested subsections..],
+    "results_analysis": [..nested subsections..],
+    "conclusion": [..nested subsections..],
+    "future_scope": [..nested subsections..]
 }}
 
-Ensure the total content length corresponds to approximately {pages} pages when formatted.
-Make the content realistic, technical, and professional.
+### CRITICAL RULES:
+1. Every section (except Abstract, Objectives, Tools) MUST be a list of objects with "sub_title" and "content".
+2. Strings are FORBIDDEN for major section values. 
+3. Each subsection content must be expansive and technically deep.
+4. Target a total of {total_target_words} words. 
+5. Return ONLY valid JSON. Keep the response long.
 """
         return prompt.strip()

@@ -5,7 +5,7 @@ from app.models.report_schema import ReportRequest, ReportResponse
 from app.core.content_planner import ContentPlanner
 from app.core.llm_client import LLMClient
 from app.core.prompt_builder import PromptBuilder
-from app.generators.chart_generator import ChartGenerator
+from app.generators.image_generator import ImageGenerator
 from app.pdf.pdf_builder import PDFBuilder
 from app.utils.file_utils import FileUtils
 import logging
@@ -33,41 +33,60 @@ async def generate_report(
         if len(request.description) > 5000:
             raise HTTPException(status_code=400, detail="Description too long (max 5000 characters)")
         
+        # Add logging for monitoring
+        logger.info(f"[API] Received request: Title='{request.title}', Pages={request.pages}")
+        
         # Initialize components
         llm_client = LLMClient()
         prompt_builder = PromptBuilder()
         content_planner = ContentPlanner(target_pages=request.pages)
-        chart_generator = ChartGenerator()
-        pdf_builder = PDFBuilder()
-        
-        # Generate unique IDs for files
+        # Generate unique IDs for files early for use in generators
         report_id = str(uuid.uuid4())
         pdf_filename = f"report_{report_id}.pdf"
         pdf_path = os.path.join("generated_reports", pdf_filename)
+        pdf_builder = PDFBuilder()
         
-        # Build prompt and get LLM response
-        prompt = prompt_builder.build_prompt(
-            title=request.title,
-            project_type=request.project_type,
-            description=request.description,
-            pages=request.pages
-        )
+        # Determine generation strategy
+        if request.pages > 8: # Lowered threshold for better quality
+            print(f"\n[STRATEGY] Multi-Stage Iterative Generation (Target: {request.pages} pages)")
+            from app.core.section_generator import SectionGenerator
+            section_gen = SectionGenerator()
+            llm_response = await section_gen.generate_full_report(request)
+        else:
+            print(f"\n[STRATEGY] Single-Shot Generation (Target: {request.pages} pages)")
+            prompt = prompt_builder.build_prompt(
+                title=request.title,
+                project_type=request.project_type,
+                description=request.description,
+                pages=request.pages
+            )
+            # Inject required fields before validation to prevent Pydantic errors
+            llm_response = await llm_client.generate_content(prompt, validate_schema=False)
+            llm_response['title'] = request.title
+            llm_response['project_type'] = request.project_type
+            
+            # Now validate once we've injected the missing pieces
+            from app.models.report_schema import ReportContent
+            try:
+                ReportContent.model_validate(llm_response)
+                logger.info("JSON Structure validated successfully after injection.")
+            except Exception as ve:
+                logger.warning(f"JSON Structure still imperfect but proceeding: {ve}")
         
-        llm_response = await llm_client.generate_content(prompt)
-        
-        # Add title to content
-        llm_response['title'] = request.title
+        # Final safety check for title
+        if 'title' not in llm_response:
+            llm_response['title'] = request.title
         
         # Plan content structure
         content = content_planner.plan_content(llm_response)
         
-        # Generate charts
-        charts = chart_generator.generate_charts(report_id)
+        # Skip image generation per user request
+        images = []
         
         # Build PDF
         pdf_builder.create_pdf(
             content=content,
-            charts=charts,
+            images=images,
             output_path=pdf_path
         )
         
@@ -82,10 +101,6 @@ async def generate_report(
         metadata_path = os.path.join("generated_reports", f"report_{report_id}.json")
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f)
-        
-        # Clean up temporary files
-        for chart_path in charts:
-            background_tasks.add_task(FileUtils.cleanup_file, chart_path)
         
         return ReportResponse(
             success=True,

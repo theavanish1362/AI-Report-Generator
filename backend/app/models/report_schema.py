@@ -41,21 +41,30 @@ class ChartData(BaseModel):
             raise ValueError('Unsupported chart type')
         return v
 
+class Subsection(BaseModel):
+    """
+    Model for a nested subsection within a major section.
+    """
+    sub_title: str = Field(..., description="Subtitle for the subsection")
+    content: str = Field(..., description="Detailed content for this subsection")
+
 class ReportContent(BaseModel):
     """
-    Complete report content model.
+    Complete report content model with support for nested subsections.
     """
     title: str
     project_type: str
     abstract: str
-    introduction: str
-    problem_statement: str
+    # Major sections now support nested subsections for depth
+    introduction: List[Subsection]
+    problem_statement: List[Subsection]
     objectives: List[str]
-    methodology: str
+    methodology: List[Subsection]
     tools_technologies: List[str]
-    system_architecture: str
-    implementation: str
-    results_analysis: str
-    conclusion: str
-    future_scope: str
+    system_architecture: List[Subsection]
+    implementation: List[Subsection]
+    results_analysis: List[Subsection]
+    conclusion: List[Subsection]
+    future_scope: List[Subsection]
     charts_needed: List[ChartData] = []
+    image_prompts: List[Dict[str, Any]] = []
