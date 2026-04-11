@@ -1,7 +1,7 @@
 # ai-report-generator/backend/app/core/section_generator.py
 import logging
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Callable, Awaitable
 from app.core.llm_client import LLMClient
 from app.core.prompt_builder import PromptBuilder
 from app.models.report_schema import ReportRequest
@@ -13,10 +13,112 @@ class SectionGenerator:
     Orchestrates the multi-stage generation of long technical reports.
     """
     
-    def __init__(self):
+    def __init__(self, progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None):
         self.llm_client = LLMClient()
         self.prompt_builder = PromptBuilder()
         self.semaphore = None
+        self.progress_callback = progress_callback
+        self.progress_lock = None
+        self.chapter_states: Dict[int, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _now_iso() -> str:
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
+
+    def _chapter_snapshot_locked(self) -> List[Dict[str, Any]]:
+        return [dict(self.chapter_states[idx]) for idx in sorted(self.chapter_states.keys())]
+
+    async def _initialize_chapter_states(self, chapter_list: List[str]) -> List[Dict[str, Any]]:
+        import asyncio
+        if self.progress_lock is None:
+            self.progress_lock = asyncio.Lock()
+
+        async with self.progress_lock:
+            self.chapter_states = {}
+            for idx, title in enumerate(chapter_list, start=1):
+                self.chapter_states[idx] = {
+                    "chapter_number": idx,
+                    "title": title,
+                    "status": "pending",
+                    "attempt": 0,
+                    "detail": "Waiting in queue",
+                    "updated_at": self._now_iso(),
+                }
+            return self._chapter_snapshot_locked()
+
+    async def _update_chapter_state(
+        self,
+        chapter_number: int,
+        chapter_title: str,
+        status: str,
+        detail: str,
+        attempt: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        import asyncio
+        if self.progress_lock is None:
+            self.progress_lock = asyncio.Lock()
+
+        async with self.progress_lock:
+            chapter = self.chapter_states.get(
+                chapter_number,
+                {
+                    "chapter_number": chapter_number,
+                    "title": chapter_title,
+                    "status": "pending",
+                    "attempt": 0,
+                    "detail": "",
+                    "updated_at": self._now_iso(),
+                },
+            )
+            chapter["title"] = chapter_title
+            chapter["status"] = status
+            chapter["detail"] = detail
+            if attempt is not None:
+                chapter["attempt"] = attempt
+            chapter["updated_at"] = self._now_iso()
+            self.chapter_states[chapter_number] = chapter
+            return self._chapter_snapshot_locked()
+
+    async def _emit_progress(self, payload: Dict[str, Any]) -> None:
+        if not self.progress_callback:
+            return
+        try:
+            await self.progress_callback(payload)
+        except Exception as callback_error:
+            logger.warning("Progress callback failed: %s", callback_error)
+
+    async def _mark_chapter_completed(
+        self,
+        chapter_number: int,
+        chapter_title: str,
+        total: int,
+        chapter_details: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        import asyncio
+
+        if self.progress_lock is None:
+            self.progress_lock = asyncio.Lock()
+
+        async with self.progress_lock:
+            self.completed_sections += 1
+            completed = self.completed_sections
+
+        progress = 40 + int((completed / max(total, 1)) * 45)
+        if progress > 85:
+            progress = 85
+
+        await self._emit_progress(
+            {
+                "phase": "chapter_generation",
+                "message": f"Completed chapter {chapter_number}/{total}: {chapter_title}",
+                "progress": progress,
+                "current_chapter": chapter_number,
+                "completed_chapters": completed,
+                "total_chapters": total,
+                "chapter_details": chapter_details if chapter_details is not None else [],
+            }
+        )
 
     def _heal_keys(self, content: Dict[str, Any]) -> Dict[str, Any]:
         """Maps common AI key variations back to the expected PDF schema."""
@@ -52,8 +154,26 @@ class SectionGenerator:
             sec_title = section.get("title")
             sec_key = section.get("key")
             subsections = section.get("subsections", [])
+            chapter_number = i + 1
             
-            print(f"[PROGRESS] Starting Chapter {i+1}/{total}: '{sec_title}'...", flush=True)
+            print(f"[PROGRESS] Starting Chapter {chapter_number}/{total}: '{sec_title}'...", flush=True)
+            
+            # Map chapter keys to specific phases for conclusion/abstract
+            phase = f"generating_chapter_{chapter_number}"
+            if sec_key == "abstract": phase = "generating_abstract"
+            if sec_key == "conclusion": phase = "generating_conclusion"
+
+            await self._emit_progress(
+                {
+                    "phase": phase,
+                    "message": f"Generating {sec_title}",
+                    "progress": 40 + int((i / max(total, 1)) * 45),
+                    "current_chapter": chapter_number,
+                    "chapter_title": sec_title,
+                    "total_chapters": total,
+                    "sub_steps": ["Analyzing components...", "Writing introduction...", "Structuring content..."]
+                }
+            )
             
             sec_prompt = self.prompt_builder.build_section_prompt(
                 title=request.title,
@@ -66,6 +186,29 @@ class SectionGenerator:
             max_retries = 2
             for attempt in range(max_retries + 1):
                 try:
+                    chapter_details = await self._update_chapter_state(
+                        chapter_number=chapter_number,
+                        chapter_title=sec_title,
+                        status="running",
+                        detail=f"Generating content (attempt {attempt + 1}/{max_retries + 1})",
+                        attempt=attempt + 1,
+                    )
+                    phase = f"generating_chapter_{chapter_number}"
+                    if sec_key == "abstract": phase = "generating_abstract"
+                    if sec_key == "conclusion": phase = "generating_conclusion"
+
+                    await self._emit_progress(
+                        {
+                            "phase": phase,
+                            "message": f"Generating {sec_title} (attempt {attempt + 1})",
+                            "progress": 40 + int((i / max(total, 1)) * 45),
+                            "current_chapter": chapter_number,
+                            "total_chapters": total,
+                            "chapter_details": chapter_details,
+                            "sub_steps": ["Refining content...", "Optimizing structure...", "Verifying technical accuracy..."]
+                        }
+                    )
+
                     chapter_data = await self.llm_client.generate_content(sec_prompt)
                     
                     # SMART UNWRAPPING: Handle if model wrapped list in a dict
@@ -86,18 +229,60 @@ class SectionGenerator:
                         chapter_data = [{"sub_title": "Executive Overview", "content": chapter_data}]
 
                     if isinstance(chapter_data, list):
-                        print(f"[SUCCESS] Chapter {i+1} complete: '{sec_title}'", flush=True)
+                        print(f"[SUCCESS] Chapter {chapter_number} complete: '{sec_title}'", flush=True)
+                        chapter_details = await self._update_chapter_state(
+                            chapter_number=chapter_number,
+                            chapter_title=sec_title,
+                            status="completed",
+                            detail=f"Chapter generated successfully on attempt {attempt + 1}",
+                            attempt=attempt + 1,
+                        )
+                        await self._mark_chapter_completed(chapter_number, sec_title, total, chapter_details=chapter_details)
                         return sec_key, chapter_data
                         
                     # Final fallback for anything else
+                    chapter_details = await self._update_chapter_state(
+                        chapter_number=chapter_number,
+                        chapter_title=sec_title,
+                        status="fallback",
+                        detail=f"Used fallback parsing on attempt {attempt + 1}",
+                        attempt=attempt + 1,
+                    )
+                    await self._mark_chapter_completed(chapter_number, sec_title, total, chapter_details=chapter_details)
                     return sec_key, [{"sub_title": "Overview", "content": str(chapter_data)}]
                     
                 except Exception as e:
                     if attempt < max_retries:
                         print(f"[RETRY] Attempt {attempt+1} for '{sec_title}' due to: {e}", flush=True)
+                        chapter_details = await self._update_chapter_state(
+                            chapter_number=chapter_number,
+                            chapter_title=sec_title,
+                            status="retrying",
+                            detail=f"Retrying due to: {str(e)[:120]}",
+                            attempt=attempt + 1,
+                        )
+                        await self._emit_progress(
+                            {
+                                "phase": f"generating_chapter_{chapter_number}",
+                                "message": f"Retrying {sec_title}",
+                                "progress": 40 + int((i / max(total, 1)) * 45),
+                                "current_chapter": chapter_number,
+                                "total_chapters": total,
+                                "chapter_details": chapter_details,
+                                "sub_steps": ["Retrying generation...", f"Error: {str(e)[:50]}"]
+                            }
+                        )
                         continue
                     else:
                         print(f"[ERROR] Chapter '{sec_title}' failed after retries: {e}", flush=True)
+                        chapter_details = await self._update_chapter_state(
+                            chapter_number=chapter_number,
+                            chapter_title=sec_title,
+                            status="fallback",
+                            detail=f"Failed after retries. Using fallback content: {str(e)[:120]}",
+                            attempt=attempt + 1,
+                        )
+                        await self._mark_chapter_completed(chapter_number, sec_title, total, chapter_details=chapter_details)
                         return sec_key, [{"sub_title": "Outcome", "content": f"Content unavailable: {e}"}]
 
     async def generate_full_report(self, request: ReportRequest) -> Dict[str, Any]:
@@ -108,11 +293,21 @@ class SectionGenerator:
         from datetime import datetime
         if self.semaphore is None:
             self.semaphore = asyncio.Semaphore(5)
+        if self.progress_lock is None:
+            self.progress_lock = asyncio.Lock()
+        self.completed_sections = 0
 
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] [INIT] Starting Turbo Generation for '{request.title}'", flush=True)
         
         # Phase 1: Try AI Outline with a strict 45s timeout
         try:
+            await self._emit_progress(
+                {
+                    "phase": "generating_outline",
+                    "message": "Generating report outline",
+                    "progress": 30,
+                }
+            )
             outline_prompt = self.prompt_builder.build_outline_prompt(
                 title=request.title, project_type=request.project_type,
                 description=request.description, pages=request.pages
@@ -156,6 +351,19 @@ class SectionGenerator:
             
             sections = outline.get("sections", [])
             total_sections = len(sections)
+            chapter_list = [sec.get("title", f"Chapter {idx + 1}") for idx, sec in enumerate(sections)]
+            chapter_details = await self._initialize_chapter_states(chapter_list)
+            await self._emit_progress(
+                {
+                    "phase": "outline_generated",
+                    "message": "Outline generated. Starting chapter generation",
+                    "progress": 40,
+                    "chapter_list": chapter_list,
+                    "total_chapters": total_sections,
+                    "completed_chapters": 0,
+                    "chapter_details": chapter_details,
+                }
+            )
             words_per = (request.pages * 400) // max(total_sections, 1)
             
             tasks = [
@@ -176,4 +384,3 @@ class SectionGenerator:
         except Exception as e:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] [CRITICAL] Generation flow crashed: {e}", flush=True)
             raise e
-

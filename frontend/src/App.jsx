@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import ReportGenerator from './pages/ReportGenerator';
 import ReportDownload from './pages/ReportDownload';
+import ReportProgress from './pages/ReportProgress';
 import History from './pages/History';
 import Navbar from './components/Navbar';
 
@@ -24,6 +25,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/generate" replace />} />
           <Route path="/generate" element={<ReportGenerator />} />
+          <Route path="/progress/:jobId" element={<ReportProgress />} />
           <Route path="/download/:reportId" element={<ReportDownload />} />
           <Route path="/history" element={<History />} />
         </Routes>

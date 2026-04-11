@@ -1,16 +1,16 @@
-// ai-report-generator/frontend/src/pages/ReportGenerator.js
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import axios from 'axios';
-import { FileText, Send, Loader2, BookOpen, Briefcase } from 'lucide-react';
+import { FileText, Send, Loader2, BookOpen, Briefcase, X } from 'lucide-react';
 
 const ReportGenerator = () => {
   const [loading, setLoading] = useState(false);
+  const [zipInputKey, setZipInputKey] = useState(0);
   const navigate = useNavigate();
 
-  const { register, handleSubmit, watch, formState: { errors } } = useForm({
+  const { register, setValue, handleSubmit, watch, formState: { errors } } = useForm({
     defaultValues: {
       title: '',
       project_type: 'academic',
@@ -22,20 +22,48 @@ const ReportGenerator = () => {
   const projectType = watch('project_type');
   const descriptionLength = watch('description')?.length || 0;
   const pages = watch('pages') || 15;
+  const uploadedZip = watch('project_zip');
+  const uploadedZipFile = uploadedZip?.[0];
+
+  const clearUploadedZip = () => {
+    setValue('project_zip', []);
+    setZipInputKey((value) => value + 1);
+  };
 
   const onSubmit = async (data) => {
+    const zipFile = data.project_zip?.[0];
+    if (zipFile && !zipFile.name.toLowerCase().endsWith('.zip')) {
+      toast.error('Please upload a valid .zip file');
+      return;
+    }
+    if (zipFile && zipFile.size > 25 * 1024 * 1024) {
+      toast.error('ZIP file must be smaller than 25MB');
+      return;
+    }
+
     setLoading(true);
     try {
-      const response = await axios.post(`/api/generate-report`, data);
-      if (response.data.success) {
-        toast.success('Report generated successfully!');
-        navigate(`/download/${response.data.report_id}`);
-      } else {
-        toast.error(response.data.message || 'Failed to generate report');
+      const formData = new FormData();
+      formData.append('title', data.title);
+      formData.append('project_type', data.project_type);
+      formData.append('description', data.description);
+      formData.append('pages', String(data.pages));
+      if (zipFile) {
+        formData.append('project_zip', zipFile);
       }
+
+      const response = await axios.post(`/api/generate-report-job`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const jobId = response.data?.job_id;
+      if (!jobId) {
+        throw new Error('Missing job ID');
+      }
+
+      navigate(`/progress/${jobId}`);
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Something went wrong');
-    } finally {
       setLoading(false);
     }
   };
@@ -43,8 +71,6 @@ const ReportGenerator = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white py-10 px-4">
       <div className="max-w-4xl mx-auto">
-
-        {/* Header */}
         <div className="text-center mb-10">
           <h1 className="text-4xl font-bold text-gray-900 mb-3">
             Generate Professional AI Report
@@ -54,12 +80,8 @@ const ReportGenerator = () => {
           </p>
         </div>
 
-        {/* Card */}
         <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg border border-blue-100 p-8">
-
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-
-            {/* Project Title */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Project Title
@@ -77,7 +99,6 @@ const ReportGenerator = () => {
               )}
             </div>
 
-            {/* Project Type */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Project Type
@@ -121,7 +142,38 @@ const ReportGenerator = () => {
               </div>
             </div>
 
-            {/* Description */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Project Code ZIP (optional)
+              </label>
+              <input
+                key={zipInputKey}
+                type="file"
+                accept=".zip,application/zip"
+                {...register('project_zip')}
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:text-blue-700 hover:file:bg-blue-100 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+              <p className="mt-1 text-sm text-gray-500">
+                Upload your repository archive to generate a code-aware report.
+              </p>
+              {uploadedZipFile && (
+                <div className="mt-1 flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                  <p className="text-sm text-blue-700 truncate pr-3">
+                    Attached: {uploadedZipFile.name} ({(uploadedZipFile.size / (1024 * 1024)).toFixed(2)} MB)
+                  </p>
+                  <button
+                    type="button"
+                    onClick={clearUploadedZip}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-blue-200 bg-white text-blue-700 hover:bg-blue-100 transition"
+                    aria-label="Remove uploaded ZIP"
+                    title="Remove ZIP"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Project Description
@@ -140,7 +192,6 @@ const ReportGenerator = () => {
               </div>
             </div>
 
-            {/* Pages */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Number of Pages (approx.)
@@ -165,7 +216,6 @@ const ReportGenerator = () => {
               )}
             </div>
 
-            {/* Submit */}
             <button
               type="submit"
               disabled={loading}
@@ -174,7 +224,7 @@ const ReportGenerator = () => {
               {loading ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  Generating Report...
+                  Starting generation...
                 </>
               ) : (
                 <>
@@ -185,7 +235,6 @@ const ReportGenerator = () => {
             </button>
           </form>
 
-          {/* Features */}
           <div className="mt-10 pt-6 border-t border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               What you’ll get
@@ -204,7 +253,6 @@ const ReportGenerator = () => {
               ))}
             </div>
           </div>
-
         </div>
       </div>
     </div>
