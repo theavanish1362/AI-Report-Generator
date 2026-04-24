@@ -96,6 +96,8 @@ class LLMClient:
                 """Helper to fix common LLM JSON errors."""
                 # Fix trailing commas
                 text = re.sub(r',\s*([\]\}])', r'\1', text)
+                # Fix unescaped newlines inside strings
+                text = re.sub(r'(?<=": ")(.*?)(?=")', lambda m: m.group(0).replace('\n', '\\n'), text)
                 return text
 
             print("[EXTRACT] Searching for data structure...", flush=True)
@@ -121,15 +123,37 @@ class LLMClient:
                     pass
 
             if not parsed_content:
-                # 3. Last resort: Try finding balanced blocks sequentially
+                # 3. Regex-based block extraction
                 obj_match = re.search(r'(\{.*\}|\[.*\])', content_to_parse, re.DOTALL)
                 if obj_match:
                     try:
                         parsed_content = json.loads(heal_json(obj_match.group(1)))
                     except:
-                        raise ValueError("Could not extract any valid JSON structure from LLM output.")
+                        pass
+            
+            if not parsed_content:
+                # 4. ULTIMATE FALLBACK: Convert plain text into structured JSON
+                # This handles when Llama 3.3 writes great content but not in JSON format
+                print("[EXTRACT] No JSON found. Converting plain text to structured content...", flush=True)
+                
+                # Split by common heading patterns (numbered sections, markdown headers, etc.)
+                sections = re.split(r'\n(?=\d+[\.\)]\s|#{1,3}\s|\*\*[A-Z])', content_to_parse)
+                
+                if len(sections) > 1:
+                    structured = []
+                    for sec in sections:
+                        sec = sec.strip()
+                        if not sec:
+                            continue
+                        # Extract title from first line
+                        lines = sec.split('\n', 1)
+                        title = re.sub(r'^[\d\.\)#\*\s]+', '', lines[0]).strip()
+                        body = lines[1].strip() if len(lines) > 1 else sec
+                        structured.append({"sub_title": title, "content": body})
+                    parsed_content = structured
                 else:
-                    raise ValueError("No JSON structure detected in response.")
+                    # Single block of text — wrap it as one section
+                    parsed_content = [{"sub_title": "Overview", "content": content_to_parse}]
 
             # 3. Validation
             if validate_schema:

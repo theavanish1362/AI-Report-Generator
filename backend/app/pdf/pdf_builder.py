@@ -117,6 +117,12 @@ class PDFBuilder:
                         sub_title = sub.get('sub_title', '') if isinstance(sub, dict) else ''
                         sub_text = sub.get('content', '') if isinstance(sub, dict) else str(sub)
                         
+                        # Ensure sub_text is always a string
+                        if isinstance(sub_text, list):
+                            sub_text = '\n\n'.join(str(item) for item in sub_text)
+                        elif not isinstance(sub_text, str):
+                            sub_text = str(sub_text)
+                        
                         if sub_title:
                             story.append(Paragraph(sub_title, self.styles['Heading2']))
                             story.append(Spacer(1, 0.1 * inch))
