@@ -5,8 +5,6 @@ import { FileText, Download, Calendar, Trash2, Clock } from "lucide-react";
 import toast from "react-hot-toast";
 import axios from "axios";
 
-
-
 const History = () => {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);

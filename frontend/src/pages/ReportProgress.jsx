@@ -75,57 +75,52 @@ const ReportProgress = () => {
     pollRef.current = setInterval(refreshStatus, 1500);
   }, [jobId]);
 
-  // Define phases based on the user's requested checklist
+  // High-level phases driven by overall progress percentage. Each phase owns
+  // a [progressMin, progressMax) window. This keeps the UI monotonic and
+  // immune to out-of-order events from parallel chapter generation.
   const phases = useMemo(() => {
-    const base = [
-      { key: 'zip_uploaded', title: 'Zip Uploaded', icon: Zap },
-      { key: 'parsing_zip', title: 'Parsing Zip File', icon: Loader2 },
-      { key: 'scanning_code', title: 'Scanning Code', icon: Search },
-      { key: 'generating_outline', title: 'Generating Report Outline', icon: Layout },
-      { key: 'generating_abstract', title: 'Generating Abstract', icon: BookOpen },
-    ];
+    const hasZip = !!status?.has_zip;
+    const list = [];
 
-    // Add dynamic chapters
-    if (status?.chapter_list && status.chapter_list.length > 0) {
-      status.chapter_list.forEach((title, i) => {
-        base.push({
-          key: `generating_chapter_${i + 1}`,
-          title: `Generating ${title}`,
-          icon: BookOpen,
-          isChapter: true
-        });
-      });
+    if (hasZip) {
+      list.push(
+        { key: 'preparing', title: 'Preparing Report', progressMin: 0, progressMax: 10, icon: Zap },
+        { key: 'analyzing_zip', title: 'Analyzing Project ZIP', progressMin: 10, progressMax: 30, icon: Search },
+        { key: 'planning', title: 'Locking Report Structure', progressMin: 30, progressMax: 40, icon: Layout },
+      );
     } else {
-      // Placeholder chapters if list not yet loaded
-      base.push({ key: 'generating_chapters', title: 'Generating Chapters', icon: BookOpen });
+      list.push(
+        { key: 'preparing', title: 'Preparing Report', progressMin: 0, progressMax: 25, icon: Zap },
+        { key: 'planning', title: 'Locking Report Structure', progressMin: 25, progressMax: 40, icon: Layout },
+      );
     }
 
-    base.push(
-      { key: 'generating_conclusion', title: 'Generating Conclusion', icon: BookOpen },
-      { key: 'bundling_pdf', title: 'Bundling PDF', icon: FileText },
-      { key: 'completing', title: 'Finalizing Report', icon: CheckCircle2 },
-      { key: 'ready_to_download', title: 'Ready to Download', icon: Download }
+    list.push(
+      { key: 'chapters', title: 'Generating Chapters', progressMin: 40, progressMax: 85, icon: BookOpen, showChapters: true },
+      { key: 'bundling', title: 'Bundling PDF', progressMin: 85, progressMax: 95, icon: FileText },
+      { key: 'finalizing', title: 'Finalizing Report', progressMin: 95, progressMax: 100, icon: CheckCircle2 },
+      { key: 'ready', title: 'Ready to Download', progressMin: 100, progressMax: 100, icon: Download, terminal: true },
     );
 
-    // Filter out zip related steps if no zip was uploaded
-    if (status && !status.has_zip) {
-      return base.filter(p => !['zip_uploaded', 'parsing_zip', 'scanning_code'].includes(p.key));
-    }
+    return list;
+  }, [status?.has_zip]);
 
-    return base;
-  }, [status]);
-
-  const getPhaseState = (phaseKey) => {
+  const getPhaseState = (phase) => {
     if (!status) return 'pending';
     if (status.status === 'failed') return 'pending';
+    const progress = status.progress || 0;
+    const isCompleted = status.status === 'completed';
 
-    const currentPhase = status.phase;
-    const phaseOrder = phases.map(p => p.key);
-    const currentIndex = phaseOrder.indexOf(currentPhase);
-    const targetIndex = phaseOrder.indexOf(phaseKey);
+    // The terminal "Ready" phase only flips to done when the job is completed.
+    if (phase.terminal) {
+      return isCompleted ? 'done' : 'pending';
+    }
 
-    if (currentPhase === phaseKey) return 'active';
-    if (currentIndex > targetIndex || status.status === 'completed') return 'done';
+    // Once the job is completed, every non-terminal phase is done.
+    if (isCompleted) return 'done';
+
+    if (progress >= phase.progressMax) return 'done';
+    if (progress >= phase.progressMin) return 'active';
     return 'pending';
   };
 
@@ -149,8 +144,8 @@ const ReportProgress = () => {
     }
   };
 
-  const completedCount = phases.filter((phase) => getPhaseState(phase.key) === 'done').length;
-  const activePhase = phases.find((phase) => getPhaseState(phase.key) === 'active');
+  const completedCount = phases.filter((phase) => getPhaseState(phase) === 'done').length;
+  const activePhase = phases.find((phase) => getPhaseState(phase) === 'active');
 
   if (loading) {
     return (
@@ -231,10 +226,12 @@ const ReportProgress = () => {
             <div className="h-[520px] overflow-y-auto px-6 py-6 scrollbar-hide sm:px-8">
               <div className="space-y-3">
                 {phases.map((phase, index) => {
-                  const state = getPhaseState(phase.key);
+                  const state = getPhaseState(phase);
                   const isActive = state === 'active';
                   const isDone = state === 'done';
                   const Icon = phase.icon;
+                  const showChapterDetails =
+                    phase.showChapters && isActive && status?.chapter_details?.length > 0;
 
                   return (
                     <div
@@ -283,7 +280,52 @@ const ReportProgress = () => {
                             )}
                           </div>
 
-                          {isActive && status?.sub_steps && status.sub_steps.length > 0 && (
+                          {showChapterDetails && (
+                            <div className="mt-3 space-y-1.5">
+                              {status.chapter_details.map((chapter) => {
+                                const chapterDone =
+                                  chapter.status === 'completed' || chapter.status === 'fallback';
+                                const chapterActive =
+                                  chapter.status === 'running' || chapter.status === 'retrying';
+                                return (
+                                  <div
+                                    key={chapter.chapter_number}
+                                    className="flex items-start gap-2 rounded-lg border border-slate-100 bg-white/70 px-3 py-2 text-sm"
+                                  >
+                                    <div className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                                      {chapterDone ? (
+                                        <Check className="h-4 w-4 text-emerald-600" />
+                                      ) : chapterActive ? (
+                                        <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                                      ) : (
+                                        <Circle className="h-2.5 w-2.5 fill-current text-slate-300" />
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <p
+                                        className={`truncate font-semibold ${
+                                          chapterDone
+                                            ? 'text-slate-500'
+                                            : chapterActive
+                                              ? 'text-blue-800'
+                                              : 'text-slate-500'
+                                        }`}
+                                      >
+                                        {chapter.title}
+                                      </p>
+                                      {chapterActive && chapter.detail && (
+                                        <p className="truncate text-xs font-medium text-slate-500">
+                                          {chapter.detail}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {isActive && !phase.showChapters && status?.sub_steps?.length > 0 && (
                             <div className="mt-3 space-y-2">
                               {status.sub_steps.map((step, idx) => (
                                 <div

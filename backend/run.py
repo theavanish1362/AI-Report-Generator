@@ -18,6 +18,8 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG,
+        reload_dirs=["app"],
+        reload_excludes=[".venv/*", "generated_reports/*", "generated_charts/*", "*.pyc"],
         log_level="info",
         timeout_keep_alive=600,
         timeout_graceful_shutdown=600

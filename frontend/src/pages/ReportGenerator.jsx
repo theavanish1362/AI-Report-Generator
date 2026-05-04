@@ -15,13 +15,13 @@ const ReportGenerator = () => {
       title: '',
       project_type: 'academic',
       description: '',
-      pages: 15,
+      pages: 20,
     }
   });
 
   const projectType = watch('project_type');
   const descriptionLength = watch('description')?.length || 0;
-  const pages = watch('pages') || 15;
+  const pages = watch('pages') || 20;
   const uploadedZip = watch('project_zip');
   const uploadedZipFile = uploadedZip?.[0];
 
@@ -52,7 +52,7 @@ const ReportGenerator = () => {
         formData.append('project_zip', zipFile);
       }
 
-      const response = await axios.post(`/api/generate-report-job`, formData, {
+      const response = await axios.post('/api/generate-report-job', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -199,10 +199,10 @@ const ReportGenerator = () => {
               <div className="flex items-center gap-4">
                 <input
                   type="range"
-                  min="5"
-                  max="30"
+                  min="18"
+                  max="40"
                   step="1"
-                  {...register('pages', { valueAsNumber: true, min: 5, max: 30 })}
+                  {...register('pages', { valueAsNumber: true, min: 18, max: 40 })}
                   className="w-full"
                 />
                 <span className="w-16 text-right text-sm font-semibold text-gray-900">
@@ -211,7 +211,7 @@ const ReportGenerator = () => {
               </div>
               {errors.pages && (
                 <p className="text-sm text-red-600 mt-1">
-                  Please choose between 5 and 30 pages
+                  Please choose between 18 and 40 pages
                 </p>
               )}
             </div>

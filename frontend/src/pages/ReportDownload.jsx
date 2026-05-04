@@ -1,6 +1,6 @@
 // ai-report-generator/frontend/src/pages/ReportDownload.js
 import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import {

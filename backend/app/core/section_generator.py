@@ -1,419 +1,88 @@
-# # ai-report-generator/backend/app/core/section_generator.py
-# import logging
-# import json
-# from typing import Dict, Any, List, Optional, Callable, Awaitable
-# from app.core.llm_client import LLMClient
-# from app.core.prompt_builder import PromptBuilder
-# from app.models.report_schema import ReportRequest
-
-# logger = logging.getLogger(__name__)
-
-# class SectionGenerator:
-#     """
-#     Orchestrates the multi-stage generation of long technical reports.
-#     """
-    
-#     def __init__(self, progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None):
-#         self.llm_client = LLMClient()
-#         self.prompt_builder = PromptBuilder()
-#         self.semaphore = None
-#         self.progress_callback = progress_callback
-#         self.progress_lock = None
-#         self.chapter_states: Dict[int, Dict[str, Any]] = {}
-
-#     @staticmethod
-#     def _now_iso() -> str:
-#         from datetime import datetime, timezone
-#         return datetime.now(timezone.utc).isoformat()
-
-#     def _chapter_snapshot_locked(self) -> List[Dict[str, Any]]:
-#         return [dict(self.chapter_states[idx]) for idx in sorted(self.chapter_states.keys())]
-
-#     async def _initialize_chapter_states(self, chapter_list: List[str]) -> List[Dict[str, Any]]:
-#         import asyncio
-#         if self.progress_lock is None:
-#             self.progress_lock = asyncio.Lock()
-
-#         async with self.progress_lock:
-#             self.chapter_states = {}
-#             for idx, title in enumerate(chapter_list, start=1):
-#                 self.chapter_states[idx] = {
-#                     "chapter_number": idx,
-#                     "title": title,
-#                     "status": "pending",
-#                     "attempt": 0,
-#                     "detail": "Waiting in queue",
-#                     "updated_at": self._now_iso(),
-#                 }
-#             return self._chapter_snapshot_locked()
-
-#     async def _update_chapter_state(
-#         self,
-#         chapter_number: int,
-#         chapter_title: str,
-#         status: str,
-#         detail: str,
-#         attempt: Optional[int] = None,
-#     ) -> List[Dict[str, Any]]:
-#         import asyncio
-#         if self.progress_lock is None:
-#             self.progress_lock = asyncio.Lock()
-
-#         async with self.progress_lock:
-#             chapter = self.chapter_states.get(
-#                 chapter_number,
-#                 {
-#                     "chapter_number": chapter_number,
-#                     "title": chapter_title,
-#                     "status": "pending",
-#                     "attempt": 0,
-#                     "detail": "",
-#                     "updated_at": self._now_iso(),
-#                 },
-#             )
-#             chapter["title"] = chapter_title
-#             chapter["status"] = status
-#             chapter["detail"] = detail
-#             if attempt is not None:
-#                 chapter["attempt"] = attempt
-#             chapter["updated_at"] = self._now_iso()
-#             self.chapter_states[chapter_number] = chapter
-#             return self._chapter_snapshot_locked()
-
-#     async def _emit_progress(self, payload: Dict[str, Any]) -> None:
-#         if not self.progress_callback:
-#             return
-#         try:
-#             await self.progress_callback(payload)
-#         except Exception as callback_error:
-#             logger.warning("Progress callback failed: %s", callback_error)
-
-#     async def _mark_chapter_completed(
-#         self,
-#         chapter_number: int,
-#         chapter_title: str,
-#         total: int,
-#         chapter_details: Optional[List[Dict[str, Any]]] = None,
-#     ) -> None:
-#         import asyncio
-
-#         if self.progress_lock is None:
-#             self.progress_lock = asyncio.Lock()
-
-#         async with self.progress_lock:
-#             self.completed_sections += 1
-#             completed = self.completed_sections
-
-#         progress = 40 + int((completed / max(total, 1)) * 45)
-#         if progress > 85:
-#             progress = 85
-
-#         await self._emit_progress(
-#             {
-#                 "phase": "chapter_generation",
-#                 "message": f"Completed chapter {chapter_number}/{total}: {chapter_title}",
-#                 "progress": progress,
-#                 "current_chapter": chapter_number,
-#                 "completed_chapters": completed,
-#                 "total_chapters": total,
-#                 "chapter_details": chapter_details if chapter_details is not None else [],
-#             }
-#         )
-
-#     def _heal_keys(self, content: Dict[str, Any]) -> Dict[str, Any]:
-#         """Maps common AI key variations back to the expected PDF schema."""
-#         mapping = {
-#             "intro": "introduction",
-#             "executive_summary": "introduction",
-#             "summary": "introduction",
-#             "problem": "problem_statement",
-#             "background": "problem_statement",
-#             "goals": "objectives",
-#             "stack": "tools_technologies",
-#             "tech": "tools_technologies",
-#             "architecture": "system_architecture",
-#             "design": "system_architecture",
-#             "logic": "implementation",
-#             "testing": "results_analysis",
-#             "benchmarks": "results_analysis",
-#             "analysis": "results_analysis",
-#             "roadmap": "future_scope",
-#             "next_steps": "future_scope",
-#             "final_thoughts": "conclusion"
-#         }
-        
-#         healed = {}
-#         for k, v in content.items():
-#             new_key = mapping.get(k.lower(), k)
-#             healed[new_key] = v
-#         return healed
-
-#     async def _generate_section(self, i: int, total: int, request: ReportRequest, section: Dict[str, Any], target_words: int) -> tuple:
-#         """Helper to generate a single section with retry logic and concurrency limits."""
-#         async with self.semaphore:
-#             sec_title = section.get("title")
-#             sec_key = section.get("key")
-#             subsections = section.get("subsections", [])
-#             chapter_number = i + 1
-            
-#             print(f"[PROGRESS] Starting Chapter {chapter_number}/{total}: '{sec_title}'...", flush=True)
-            
-#             # Map chapter keys to specific phases for conclusion/abstract
-#             phase = f"generating_chapter_{chapter_number}"
-#             if sec_key == "abstract": phase = "generating_abstract"
-#             if sec_key == "conclusion": phase = "generating_conclusion"
-
-#             await self._emit_progress(
-#                 {
-#                     "phase": phase,
-#                     "message": f"Generating {sec_title}",
-#                     "progress": 40 + int((i / max(total, 1)) * 45),
-#                     "current_chapter": chapter_number,
-#                     "chapter_title": sec_title,
-#                     "total_chapters": total,
-#                     "sub_steps": ["Analyzing components...", "Writing introduction...", "Structuring content..."]
-#                 }
-#             )
-            
-#             sec_prompt = self.prompt_builder.build_section_prompt(
-#                 title=request.title,
-#                 section_title=sec_title,
-#                 subsections=subsections,
-#                 target_words=target_words,
-#                 chapter_number=chapter_number
-#             )
-            
-#             # Retry loop for stability
-#             max_retries = 2
-#             for attempt in range(max_retries + 1):
-#                 try:
-#                     chapter_details = await self._update_chapter_state(
-#                         chapter_number=chapter_number,
-#                         chapter_title=sec_title,
-#                         status="running",
-#                         detail=f"Generating content (attempt {attempt + 1}/{max_retries + 1})",
-#                         attempt=attempt + 1,
-#                     )
-#                     phase = f"generating_chapter_{chapter_number}"
-#                     if sec_key == "abstract": phase = "generating_abstract"
-#                     if sec_key == "conclusion": phase = "generating_conclusion"
-
-#                     await self._emit_progress(
-#                         {
-#                             "phase": phase,
-#                             "message": f"Generating {sec_title} (attempt {attempt + 1})",
-#                             "progress": 40 + int((i / max(total, 1)) * 45),
-#                             "current_chapter": chapter_number,
-#                             "total_chapters": total,
-#                             "chapter_details": chapter_details,
-#                             "sub_steps": ["Refining content...", "Optimizing structure...", "Verifying technical accuracy..."]
-#                         }
-#                     )
-
-#                     chapter_data = await self.llm_client.generate_content(sec_prompt)
-                    
-#                     # SMART UNWRAPPING: Handle if model wrapped list in a dict
-#                     if isinstance(chapter_data, dict):
-#                         # 1. Look for any list inside the dict (common LLM behavior)
-#                         for val in chapter_data.values():
-#                             if isinstance(val, list):
-#                                 chapter_data = val
-#                                 break
-                        
-#                         # 2. If it's still a dict, it might be the content itself
-#                         if isinstance(chapter_data, dict):
-#                             # Check if the dict is already a single subsection object
-#                             if "sub_title" in chapter_data and "content" in chapter_data:
-#                                 chapter_data = [chapter_data]
-#                             elif "title" in chapter_data and "content" in chapter_data:
-#                                 chapter_data = [{"sub_title": chapter_data["title"], "content": chapter_data["content"]}]
-#                             else:
-#                                 # Convert dict to a single-item list fallback
-#                                 chapter_data = [{"sub_title": "Section Details", "content": str(chapter_data)}]
-                    
-#                     # 3. Handle flat string output
-#                     if isinstance(chapter_data, str):
-#                         chapter_data = [{"sub_title": "Executive Overview", "content": chapter_data}]
-
-#                     if isinstance(chapter_data, list):
-#                         print(f"[SUCCESS] Chapter {chapter_number} complete: '{sec_title}'", flush=True)
-#                         chapter_details = await self._update_chapter_state(
-#                             chapter_number=chapter_number,
-#                             chapter_title=sec_title,
-#                             status="completed",
-#                             detail=f"Chapter generated successfully on attempt {attempt + 1}",
-#                             attempt=attempt + 1,
-#                         )
-#                         await self._mark_chapter_completed(chapter_number, sec_title, total, chapter_details=chapter_details)
-#                         return sec_key, chapter_data
-                        
-#                     # Final fallback for anything else
-#                     chapter_details = await self._update_chapter_state(
-#                         chapter_number=chapter_number,
-#                         chapter_title=sec_title,
-#                         status="fallback",
-#                         detail=f"Used fallback parsing on attempt {attempt + 1}",
-#                         attempt=attempt + 1,
-#                     )
-#                     await self._mark_chapter_completed(chapter_number, sec_title, total, chapter_details=chapter_details)
-#                     return sec_key, [{"sub_title": "Overview", "content": str(chapter_data)}]
-                    
-#                 except Exception as e:
-#                     if attempt < max_retries:
-#                         print(f"[RETRY] Attempt {attempt+1} for '{sec_title}' due to: {e}", flush=True)
-#                         chapter_details = await self._update_chapter_state(
-#                             chapter_number=chapter_number,
-#                             chapter_title=sec_title,
-#                             status="retrying",
-#                             detail=f"Retrying due to: {str(e)[:120]}",
-#                             attempt=attempt + 1,
-#                         )
-#                         await self._emit_progress(
-#                             {
-#                                 "phase": f"generating_chapter_{chapter_number}",
-#                                 "message": f"Retrying {sec_title}",
-#                                 "progress": 40 + int((i / max(total, 1)) * 45),
-#                                 "current_chapter": chapter_number,
-#                                 "total_chapters": total,
-#                                 "chapter_details": chapter_details,
-#                                 "sub_steps": ["Retrying generation...", f"Error: {str(e)[:50]}"]
-#                             }
-#                         )
-#                         continue
-#                     else:
-#                         print(f"[ERROR] Chapter '{sec_title}' failed after retries: {e}", flush=True)
-#                         chapter_details = await self._update_chapter_state(
-#                             chapter_number=chapter_number,
-#                             chapter_title=sec_title,
-#                             status="fallback",
-#                             detail=f"Failed after retries. Using fallback content: {str(e)[:120]}",
-#                             attempt=attempt + 1,
-#                         )
-#                         await self._mark_chapter_completed(chapter_number, sec_title, total, chapter_details=chapter_details)
-#                         return sec_key, [{"sub_title": "Outcome", "content": f"Content unavailable: {e}"}]
-
-#     async def generate_full_report(self, request: ReportRequest) -> Dict[str, Any]:
-#         """
-#         Main entry point for Turbo multi-stage generation.
-#         """
-#         import asyncio
-#         from datetime import datetime
-#         if self.semaphore is None:
-#             self.semaphore = asyncio.Semaphore(5)
-#         if self.progress_lock is None:
-#             self.progress_lock = asyncio.Lock()
-#         self.completed_sections = 0
-
-#         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] [INIT] Starting Turbo Generation for '{request.title}'", flush=True)
-        
-#         # Phase 1: Try AI Outline with a strict 45s timeout
-#         try:
-#             await self._emit_progress(
-#                 {
-#                     "phase": "generating_outline",
-#                     "message": "Generating report outline",
-#                     "progress": 30,
-#                 }
-#             )
-#             outline_prompt = self.prompt_builder.build_outline_prompt(
-#                 title=request.title, project_type=request.project_type,
-#                 description=request.description, pages=request.pages
-#             )
-#             print(f"[{datetime.now().strftime('%H:%M:%S')}] [PHASE 1] Requesting AI Outline (45s timeout)...", flush=True)
-            
-#             # Using wait_for to prevent infinite hanging
-#             outline = await asyncio.wait_for(self.llm_client.generate_content(outline_prompt), timeout=300.0)
-#             print(f"[{datetime.now().strftime('%H:%M:%S')}] [PHASE 1] AI Outline received successfully.", flush=True)
-            
-#         except (asyncio.TimeoutError, Exception) as e:
-#             print(f"[{datetime.now().strftime('%H:%M:%S')}] [PHASE 1] AI Outline hung or failed. Switching to High-Quality Master Template...", flush=True)
-#             # HIGH QUALITY FALLBACK: Ensuring we never stick at Phase 1
-#             outline = {
-#                 "title": request.title,
-#                 "abstract_plan": f"A comprehensive technical analysis and strategic roadmap for {request.title}.",
-#                 "sections": [
-#                     { "title": "1. Executive Summary and Strategic Context", "key": "introduction", "subsections": ["Industry Landscape & Trends", "Project Necessity and Motivation", "Strategic Value Proposition", "Long-term Vision & Scalability", "Operational Scope"] },
-#                     { "title": "2. Technical Foundation and Requirements", "key": "problem_statement", "subsections": ["Core Problem Definition", "Functional User Requirements", "Non-Functional Technical Constraints", "Compliance & Regulatory Standards", "Stakeholder Impact Analysis"] },
-#                     { "title": "3. Proposed Methodology and Framework", "key": "methodology", "subsections": ["Strategic Methodology Selection", "Development Life Cycle Model", "Feasibility and Risk Assessment", "Alternative Solutions Analysis", "Research Foundations"] },
-#                     { "title": "4. Advanced System Architecture and Design", "key": "system_architecture", "subsections": ["High-Level Structural Overview", "Modular Component Interaction", "Data Security and Flow Design", "Asynchronous Messaging Patterns", "Fault Tolerance Design"] },
-#                     { "title": "5. Implementation Logic and Process Flow", "key": "implementation", "subsections": ["Core Development Frameworks", "API Integration Strategy", "Business Logic Orchestration", "Security & Identity Management", "Quality Assurance Protocols"] },
-#                     { "title": "6. Empirical Performance and Results", "key": "results_analysis", "subsections": ["Benchmarking and Technical KPIs", "Critical Analysis of Outcomes", "Efficiency & Latency Evaluation", "Scalability Stress Testing", "Optimization Reports"] },
-#                     { "title": "7. Strategic Future Scope and Evolution", "key": "future_scope", "subsections": ["Emerging Tech Integration Pipeline", "Long-term Scalability Roadmap", "Market Competitiveness Strategy", "Post-Deployment Lifecycle", "Innovation Vectors"] },
-#                     { "title": "8. Conclusion and Strategic Synthesis", "key": "conclusion", "subsections": ["Final Technical Synthesis", "Strategic Final Recommendations", "Critical Project Evaluation", "Closing Executive Remarks"] }
-#                 ]
-#             }
-
-#         # Phase 2: Parallel Generation
-#         try:
-#             print(f"[{datetime.now().strftime('%H:%M:%S')}] [PHASE 2] Starting Parallel Generation (Turbo)...", flush=True)
-            
-#             final_content = {
-#                 "title": request.title,
-#                 "project_type": request.project_type,
-#                 "abstract": outline.get("abstract_plan", "Introduction to " + request.title),
-#                 "objectives": [],
-#                 "tools_technologies": [],
-#                 "image_prompts": []
-#             }
-            
-#             sections = outline.get("sections", [])
-#             total_sections = len(sections)
-#             chapter_list = [sec.get("title", f"Chapter {idx + 1}") for idx, sec in enumerate(sections)]
-#             chapter_details = await self._initialize_chapter_states(chapter_list)
-#             await self._emit_progress(
-#                 {
-#                     "phase": "outline_generated",
-#                     "message": "Outline generated. Starting chapter generation",
-#                     "progress": 40,
-#                     "chapter_list": chapter_list,
-#                     "total_chapters": total_sections,
-#                     "completed_chapters": 0,
-#                     "chapter_details": chapter_details,
-#                 }
-#             )
-#             words_per = (request.pages * 400) // max(total_sections, 1)
-            
-#             tasks = [
-#                 self._generate_section(i, total_sections, request, sec, words_per)
-#                 for i, sec in enumerate(sections)
-#             ]
-            
-#             results = await asyncio.gather(*tasks)
-            
-#             for sec_key, chapter_data in results:
-#                 final_content[sec_key] = chapter_data
-            
-#             # Apply key healing to align AI output with PDF schema
-#             final_content = self._heal_keys(final_content)
-                
-#             print(f"[{datetime.now().strftime('%H:%M:%S')}] [FINISH] All chapters combined successfully!", flush=True)
-#             return final_content
-#         except Exception as e:
-#             print(f"[{datetime.now().strftime('%H:%M:%S')}] [CRITICAL] Generation flow crashed: {e}", flush=True)
-#             raise e
-
-
+import asyncio
 import logging
-from typing import Dict, Any, List, Optional, Callable, Awaitable
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
 from app.core.llm_client import LLMClient
 from app.core.prompt_builder import PromptBuilder
-from app.models.report_schema import ReportRequest
+from app.models.report_schema import (
+    CANONICAL_OUTLINE,
+    Chapter,
+    OrderedListBlock,
+    ParagraphBlock,
+    ReportRequest,
+    Subsection,
+    UnorderedListBlock,
+)
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Pagination calibration
+# ---------------------------------------------------------------------------
+# Anchor points measured against the real ReportLab layout (A4, 11pt body,
+# 16pt leading, H1 chapters, H2 subsections, forced PageBreak per chapter).
+# Each tuple is (rendered_pages, words_per_subsection_required). The mapping
+# is non-linear because chapters absorb extra words until they spill onto a
+# new page, so we interpolate between anchors instead of using a constant
+# words-per-page. See _calibrate_pages.py for the measurement script.
+# ---------------------------------------------------------------------------
+
+STRUCTURAL_MIN_PAGES = 18  # Floor of the canonical 11-chapter layout.
+
+# Lookup of (achievable_pages, words_per_subsection) measured empirically.
+# Pages come in discrete steps because each chapter only spills to a new page
+# above a certain word threshold; values between steps aren't reachable in
+# one shot, so the generator deliberately over-shoots and then iterative
+# truncation in the API trims down to the requested count.
+PAGE_TO_WPS_LOOKUP = [
+    (18, 50),
+    (22, 100),
+    (26, 125),
+    (28, 175),
+    (35, 250),
+    (37, 325),
+    (41, 350),
+    (45, 400),
+]
+
+
+def words_per_subsection_for_target(target_pages: int) -> int:
+    """
+    Pick the smallest per-subsection word target whose rendered page count
+    is at least `target_pages`. Caller is expected to iteratively trim if
+    the resulting PDF over-shoots the request.
+    """
+    for pages, wps in PAGE_TO_WPS_LOOKUP:
+        if target_pages <= pages:
+            return wps
+    return PAGE_TO_WPS_LOOKUP[-1][1]
+
+
 class SectionGenerator:
-    
-    def __init__(self, progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None):
+    """
+    Drives generation of every report from the canonical 11-chapter outline.
+
+    The outline is fixed in code; the LLM only produces body text per
+    subsection. We assemble Chapter / Subsection objects ourselves so the
+    final document is guaranteed to match `ReportContent`'s strict schema.
+    """
+
+    def __init__(
+        self,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ):
         self.llm_client = LLMClient()
         self.prompt_builder = PromptBuilder()
-        self.semaphore = None
+        self.semaphore: Optional[asyncio.Semaphore] = None
+        self.progress_lock: Optional[asyncio.Lock] = None
         self.progress_callback = progress_callback
-        self.progress_lock = None
         self.chapter_states: Dict[int, Dict[str, Any]] = {}
+        self.completed_sections = 0
 
     @staticmethod
     def _now_iso() -> str:
-        from datetime import datetime, timezone
         return datetime.now(timezone.utc).isoformat()
 
     async def _emit_progress(self, payload: Dict[str, Any]) -> None:
@@ -424,190 +93,416 @@ class SectionGenerator:
         except Exception as e:
             logger.warning("Progress callback failed: %s", e)
 
-    # ===========================
-    # ✅ FIXED VALIDATION BLOCK
-    # ===========================
-    def _validate_chapter_data(self, chapter_data, chapter_number):
-        if isinstance(chapter_data, dict):
-            # Aggressive unwrapping for Llama 8B over-formatting
-            if "report" in chapter_data and isinstance(chapter_data["report"], dict):
-                chapter_data = chapter_data["report"]
-                
-            if "content" in chapter_data and isinstance(chapter_data["content"], list):
-                chapter_data = chapter_data["content"]
-            elif "sections" in chapter_data and isinstance(chapter_data["sections"], list):
-                chapter_data = chapter_data["sections"]
-            elif "sub_title" in chapter_data and "content" in chapter_data:
-                chapter_data = [chapter_data]
-            elif "title" in chapter_data and "content" in chapter_data:
-                chapter_data = [{"sub_title": chapter_data["title"], "content": chapter_data["content"]}]
+    def _chapter_snapshot_locked(self) -> List[Dict[str, Any]]:
+        return [dict(self.chapter_states[idx]) for idx in sorted(self.chapter_states.keys())]
+
+    async def _initialize_chapter_states(self, chapter_titles: List[str]) -> List[Dict[str, Any]]:
+        if self.progress_lock is None:
+            self.progress_lock = asyncio.Lock()
+        async with self.progress_lock:
+            self.chapter_states = {
+                idx + 1: {
+                    "chapter_number": idx + 1,
+                    "title": title,
+                    "status": "pending",
+                    "attempt": 0,
+                    "detail": "Waiting in queue",
+                    "updated_at": self._now_iso(),
+                }
+                for idx, title in enumerate(chapter_titles)
+            }
+            return self._chapter_snapshot_locked()
+
+    async def _update_chapter_state(
+        self,
+        chapter_number: int,
+        title: str,
+        status: str,
+        detail: str,
+        attempt: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        if self.progress_lock is None:
+            self.progress_lock = asyncio.Lock()
+        async with self.progress_lock:
+            entry = self.chapter_states.get(
+                chapter_number,
+                {
+                    "chapter_number": chapter_number,
+                    "title": title,
+                    "status": "pending",
+                    "attempt": 0,
+                    "detail": "",
+                    "updated_at": self._now_iso(),
+                },
+            )
+            entry.update(
+                {
+                    "title": title,
+                    "status": status,
+                    "detail": detail,
+                    "updated_at": self._now_iso(),
+                }
+            )
+            if attempt is not None:
+                entry["attempt"] = attempt
+            self.chapter_states[chapter_number] = entry
+            return self._chapter_snapshot_locked()
+
+    async def _mark_chapter_completed(
+        self, chapter_number: int, total: int, snapshot: List[Dict[str, Any]]
+    ) -> None:
+        if self.progress_lock is None:
+            self.progress_lock = asyncio.Lock()
+        async with self.progress_lock:
+            self.completed_sections += 1
+            completed = self.completed_sections
+        progress = min(40 + int((completed / max(total, 1)) * 45), 85)
+        await self._emit_progress(
+            {
+                "phase": "chapter_generation",
+                "message": f"Completed chapter {chapter_number}/{total}",
+                "progress": progress,
+                "current_chapter": chapter_number,
+                "completed_chapters": completed,
+                "total_chapters": total,
+                "chapter_details": snapshot,
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # Coercion: turn whatever the LLM returned into per-subsection blocks
+    # ------------------------------------------------------------------
+    def _coerce_blocks(self, raw: Any) -> List[Any]:
+        """
+        Normalise a single subsection's value into a list of ContentBlock
+        objects (ParagraphBlock / OrderedListBlock / UnorderedListBlock).
+        """
+        if raw is None:
+            return []
+
+        # Single string -> one paragraph
+        if isinstance(raw, str):
+            text = raw.strip()
+            return [ParagraphBlock(text=text)] if text else []
+
+        # Single dict that is itself a block
+        if isinstance(raw, dict):
+            block = self._dict_to_block(raw)
+            if block is not None:
+                return [block]
+            # Otherwise: maybe a wrapper like {"blocks": [...]} or {"content": [...]}
+            for wrapper in ("blocks", "content", "items"):
+                inner = raw.get(wrapper)
+                if isinstance(inner, list):
+                    return self._coerce_blocks(inner)
+            # Fallback: stringify values into a single paragraph
+            joined = "\n\n".join(
+                str(v).strip() for v in raw.values() if isinstance(v, (str, int, float))
+            ).strip()
+            return [ParagraphBlock(text=joined)] if joined else []
+
+        if isinstance(raw, list):
+            blocks: List[Any] = []
+            string_buffer: List[str] = []
+
+            def flush_strings() -> None:
+                if string_buffer:
+                    text = "\n\n".join(s.strip() for s in string_buffer if s.strip())
+                    if text:
+                        blocks.append(ParagraphBlock(text=text))
+                    string_buffer.clear()
+
+            for item in raw:
+                if isinstance(item, str):
+                    string_buffer.append(item)
+                    continue
+                if isinstance(item, dict):
+                    flush_strings()
+                    block = self._dict_to_block(item)
+                    if block is not None:
+                        blocks.append(block)
+                    else:
+                        # Recurse into nested wrappers
+                        nested = self._coerce_blocks(item)
+                        blocks.extend(nested)
+            flush_strings()
+            return blocks
+
+        # Anything else: stringify
+        text = str(raw).strip()
+        return [ParagraphBlock(text=text)] if text else []
+
+    def _dict_to_block(self, item: Dict[str, Any]) -> Optional[Any]:
+        """Attempt to interpret a dict as one ContentBlock."""
+        block_type = (item.get("type") or "").lower().replace("-", "_")
+
+        if block_type == "paragraph":
+            text = item.get("text") or item.get("content") or item.get("body") or ""
+            text = str(text).strip()
+            return ParagraphBlock(text=text) if text else None
+
+        if block_type in {"ordered_list", "numbered_list", "ordered"}:
+            items = self._coerce_items(item.get("items"))
+            return OrderedListBlock(items=items) if items else None
+
+        if block_type in {"unordered_list", "bulleted_list", "bullet_list", "list"}:
+            items = self._coerce_items(item.get("items"))
+            return UnorderedListBlock(items=items) if items else None
+
+        # No explicit type, but looks like a list
+        if "items" in item and isinstance(item["items"], list):
+            items = self._coerce_items(item["items"])
+            return UnorderedListBlock(items=items) if items else None
+
+        # No explicit type, but has prose
+        text = item.get("text") or item.get("content") or item.get("body")
+        if isinstance(text, str) and text.strip():
+            return ParagraphBlock(text=text.strip())
+
+        return None
+
+    @staticmethod
+    def _coerce_items(raw: Any) -> List[str]:
+        if not isinstance(raw, list):
+            return []
+        out: List[str] = []
+        for it in raw:
+            if isinstance(it, str):
+                cleaned = it.strip()
+            elif isinstance(it, dict):
+                cleaned = str(
+                    it.get("text") or it.get("content") or it.get("body") or ""
+                ).strip()
             else:
-                # Blindly search for the first available list in the dictionary
-                for v in chapter_data.values():
-                    if isinstance(v, list):
-                        chapter_data = v
+                cleaned = str(it).strip()
+            if cleaned:
+                out.append(cleaned)
+        return out
+
+    def _coerce_chapter_data(
+        self, raw: Any, chapter_def: Dict[str, Any]
+    ) -> Dict[str, List[Any]]:
+        # Unwrap common wrappers like {"sections": {...}} or {"report": {...}}
+        if isinstance(raw, dict):
+            for wrapper in ("subsections", "data", "report", "result", "chapter"):
+                inner = raw.get(wrapper)
+                if isinstance(inner, (dict, list)):
+                    raw = inner
+                    break
+
+        result: Dict[str, List[Any]] = {}
+
+        if isinstance(raw, dict):
+            for sub in chapter_def["subsections"]:
+                num = sub["number"]
+                title = sub["title"]
+                suffix = num.split(".")[-1]
+                candidates = [
+                    num,
+                    f"{num} {title}",
+                    title,
+                    title.lower(),
+                    suffix,
+                ]
+                value = None
+                for key in candidates:
+                    if key in raw:
+                        value = raw[key]
                         break
-        
-        if not isinstance(chapter_data, list):
-            print(f"[WARNING] Invalid format. Forcing list.", flush=True)
-            chapter_data = [{
-                "sub_title": f"{chapter_number}.1 Overview",
-                "content": str(chapter_data)
-            }]
+                result[num] = self._coerce_blocks(value)
 
-        validated = []
-        for idx, item in enumerate(chapter_data):
-            if isinstance(item, dict) and "sub_title" in item and "content" in item:
-                validated.append(item)
-            else:
-                validated.append({
-                    "sub_title": f"{chapter_number}.{idx+1}",
-                    "content": str(item)
-                })
+        elif isinstance(raw, list):
+            for sub_def, item in zip(chapter_def["subsections"], raw):
+                # Each item might be a dict that already targets a subsection
+                if isinstance(item, dict) and "blocks" in item:
+                    result[sub_def["number"]] = self._coerce_blocks(item["blocks"])
+                else:
+                    result[sub_def["number"]] = self._coerce_blocks(item)
+            for sub_def in chapter_def["subsections"]:
+                result.setdefault(sub_def["number"], [])
 
-        return validated
+        else:
+            for sub_def in chapter_def["subsections"]:
+                result[sub_def["number"]] = []
 
-    async def _generate_section(self, i, total, request, section, target_words):
+        return result
+
+    # ------------------------------------------------------------------
+    # Per-chapter generation
+    # ------------------------------------------------------------------
+    async def _generate_chapter(
+        self,
+        chapter_def: Dict[str, Any],
+        request: ReportRequest,
+        target_words: int,
+        total: int,
+    ) -> Chapter:
+        assert self.semaphore is not None
         async with self.semaphore:
-            sec_title = section.get("title")
-            sec_key = section.get("key")
-            subsections = section.get("subsections", [])
-            chapter_number = i + 1
+            chapter_number = chapter_def["number"]
+            chapter_title = chapter_def["title"]
 
-            print(f"[START] Chapter {chapter_number}: {sec_title}", flush=True)
-
-            prompt = self.prompt_builder.build_section_prompt(
-                title=request.title,
-                section_title=sec_title,
-                subsections=subsections,
-                target_words=target_words,
-                chapter_number=chapter_number
+            await self._emit_progress(
+                {
+                    "phase": f"generating_chapter_{chapter_number}",
+                    "message": f"Generating Chapter {chapter_number}: {chapter_title}",
+                    "progress": 40 + int(((chapter_number - 1) / max(total, 1)) * 45),
+                    "current_chapter": chapter_number,
+                    "chapter_title": chapter_title,
+                    "total_chapters": total,
+                }
             )
 
-            try:
-                chapter_data = await self.llm_client.generate_content(prompt)
-
-                # ✅ APPLY STRICT VALIDATION
-                chapter_data = self._validate_chapter_data(chapter_data, chapter_number)
-
-                print(f"[SUCCESS] Chapter {chapter_number} generated", flush=True)
-
-                return sec_key, chapter_data
-
-            except Exception as e:
-                print(f"[ERROR] Chapter {chapter_number}: {e}", flush=True)
-                return sec_key, [{
-                    "sub_title": f"{chapter_number}.1 Error",
-                    "content": str(e)
-                }]
-
-    def _heal_keys(self, content: Dict[str, Any]) -> Dict[str, Any]:
-        """Maps common AI key variations back to the expected PDF schema."""
-        mapping = {
-            "intro": "introduction",
-            "executive_summary": "introduction",
-            "summary": "introduction",
-            "problem": "problem_statement",
-            "background": "problem_statement",
-            "goals": "objectives",
-            "stack": "tools_technologies",
-            "tech": "tools_technologies",
-            "architecture": "system_architecture",
-            "design": "system_architecture",
-            "logic": "implementation",
-            "testing": "results_analysis",
-            "benchmarks": "results_analysis",
-            "analysis": "results_analysis",
-            "roadmap": "future_scope",
-            "next_steps": "future_scope",
-            "final_thoughts": "conclusion"
-        }
-        healed = {}
-        for k, v in content.items():
-            healed[mapping.get(k.lower(), k)] = v
-        return healed
-
-    async def generate_full_report(self, request: ReportRequest) -> Dict[str, Any]:
-        import asyncio
-        from datetime import datetime
-
-        if self.semaphore is None:
-            self.semaphore = asyncio.Semaphore(5)
-
-        print(f"[INIT] Generating report: {request.title}", flush=True)
-
-        # ===========================
-        # PHASE 1: OUTLINE
-        # ===========================
-        try:
-            outline_prompt = self.prompt_builder.build_outline_prompt(
+            prompt = self.prompt_builder.build_chapter_prompt(
                 title=request.title,
                 project_type=request.project_type,
                 description=request.description,
-                pages=request.pages
+                chapter=chapter_def,
+                target_words=target_words,
             )
 
-            outline = await self.llm_client.generate_content(outline_prompt)
+            content_map: Dict[str, List[Any]] = {}
+            last_error: Optional[Exception] = None
+            max_retries = 2
 
-        except Exception:
-            print("[FALLBACK] Using default outline", flush=True)
+            for attempt in range(max_retries + 1):
+                snapshot = await self._update_chapter_state(
+                    chapter_number,
+                    chapter_title,
+                    "running",
+                    f"Generating content (attempt {attempt + 1}/{max_retries + 1})",
+                    attempt + 1,
+                )
+                await self._emit_progress(
+                    {
+                        "phase": f"generating_chapter_{chapter_number}",
+                        "message": f"Generating Chapter {chapter_number}: {chapter_title} (attempt {attempt + 1})",
+                        "progress": 40 + int(((chapter_number - 1) / max(total, 1)) * 45),
+                        "current_chapter": chapter_number,
+                        "total_chapters": total,
+                        "chapter_details": snapshot,
+                    }
+                )
 
-            outline = {
-                "sections": [
-                    { "title": "1. Introduction", "key": "introduction",
-                      "subsections": ["Overview", "Motivation", "Scope", "Challenges", "Summary"] },
+                try:
+                    raw = await self.llm_client.generate_content(prompt)
+                    content_map = self._coerce_chapter_data(raw, chapter_def)
+                    if any(content_map.values()):
+                        break
+                except Exception as e:
+                    last_error = e
+                    logger.warning(
+                        "Chapter %s attempt %s failed: %s", chapter_number, attempt + 1, e
+                    )
 
-                    { "title": "2. Problem Statement", "key": "problem_statement",
-                      "subsections": ["Definition", "Requirements", "Constraints", "Stakeholders", "Impact"] },
+            subsections = [
+                Subsection(
+                    number=sub["number"],
+                    title=sub["title"],
+                    blocks=content_map.get(sub["number"])
+                    or [
+                        ParagraphBlock(
+                            text=f"[Content unavailable for {sub['number']} {sub['title']}]"
+                        )
+                    ],
+                )
+                for sub in chapter_def["subsections"]
+            ]
 
-                    { "title": "3. Methodology", "key": "methodology",
-                      "subsections": ["Approach", "Model", "Feasibility", "Alternatives", "Research"] },
+            chapter = Chapter(
+                number=chapter_number,
+                key=chapter_def["key"],
+                title=chapter_title,
+                subsections=subsections,
+            )
 
-                    { "title": "4. System Architecture", "key": "system_architecture",
-                      "subsections": ["Overview", "Components", "Data Flow", "Security", "Scalability"] },
+            status = "completed" if any(content_map.values()) else "fallback"
+            detail = (
+                "Chapter generated"
+                if status == "completed"
+                else f"Used fallback content ({last_error})"
+            )
+            snapshot = await self._update_chapter_state(
+                chapter_number, chapter_title, status, detail
+            )
+            await self._mark_chapter_completed(chapter_number, total, snapshot)
+            return chapter
 
-                    { "title": "5. Implementation", "key": "implementation",
-                      "subsections": ["Tools", "API", "Logic", "Security", "Testing"] },
+    # ------------------------------------------------------------------
+    # Abstract
+    # ------------------------------------------------------------------
+    async def _generate_abstract(self, request: ReportRequest) -> str:
+        prompt = self.prompt_builder.build_abstract_prompt(
+            title=request.title,
+            project_type=request.project_type,
+            description=request.description,
+        )
+        try:
+            raw = await self.llm_client.generate_content(prompt)
+            if isinstance(raw, dict):
+                value = raw.get("abstract") or raw.get("content") or ""
+                if isinstance(value, list):
+                    value = "\n\n".join(str(v) for v in value)
+                return str(value).strip()
+            return str(raw).strip()
+        except Exception as e:
+            logger.warning("Abstract generation failed: %s", e)
+            return f"This report presents {request.title}. {request.description[:400]}"
 
-                    { "title": "6. Results Analysis", "key": "results_analysis",
-                      "subsections": ["Metrics", "Evaluation", "Performance", "Scalability", "Optimization"] },
+    # ------------------------------------------------------------------
+    # Entry point
+    # ------------------------------------------------------------------
+    async def generate_full_report(self, request: ReportRequest) -> Dict[str, Any]:
+        if self.semaphore is None:
+            self.semaphore = asyncio.Semaphore(5)
+        if self.progress_lock is None:
+            self.progress_lock = asyncio.Lock()
+        self.completed_sections = 0
 
-                    { "title": "7. Future Scope", "key": "future_scope",
-                      "subsections": ["Enhancements", "Scaling", "Innovation", "Maintenance", "Trends"] },
+        outline = CANONICAL_OUTLINE
+        total = len(outline)
+        chapter_titles = [f"{c['number']}. {c['title']}" for c in outline]
 
-                    { "title": "8. Conclusion", "key": "conclusion",
-                      "subsections": ["Summary", "Findings", "Evaluation", "Recommendations", "Closure"] }
-                ]
+        snapshot = await self._initialize_chapter_states(chapter_titles)
+        await self._emit_progress(
+            {
+                "phase": "outline_locked",
+                "message": "Using canonical 11-chapter outline. Generating chapters",
+                "progress": 38,
+                "chapter_list": chapter_titles,
+                "total_chapters": total,
+                "completed_chapters": 0,
+                "chapter_details": snapshot,
             }
+        )
 
-        # ===========================
-        # PHASE 2: GENERATION
-        # ===========================
-        sections = outline.get("sections", [])
-        total = len(sections)
+        # Calibrated per-subsection word target so the rendered PDF lands close
+        # to the requested page count.
+        words_per_sub = words_per_subsection_for_target(request.pages)
+        chapter_targets = [
+            words_per_sub * len(c["subsections"]) for c in outline
+        ]
+        logger.info(
+            "[PAGINATION] target_pages=%s words_per_subsection=%s",
+            request.pages,
+            words_per_sub,
+        )
 
-        words_per_section = (request.pages * 400) // max(total, 1)
-
-        tasks = [
-            self._generate_section(i, total, request, sec, words_per_section)
-            for i, sec in enumerate(sections)
+        abstract_task = asyncio.create_task(self._generate_abstract(request))
+        chapter_tasks = [
+            asyncio.create_task(
+                self._generate_chapter(chapter_def, request, target, total)
+            )
+            for chapter_def, target in zip(outline, chapter_targets)
         ]
 
-        results = await asyncio.gather(*tasks)
+        chapters: List[Chapter] = await asyncio.gather(*chapter_tasks)
+        abstract = await abstract_task
+        chapters.sort(key=lambda c: c.number)
 
-        final_content = {
+        return {
             "title": request.title,
             "project_type": request.project_type,
-            "abstract": request.description,
-            "objectives": ["Primary objective of " + request.title, "Secondary requirement fulfillment", "Technical scope validation"],
-            "tools_technologies": ["Chosen frameworks", "Deployment environment", "Core utilities"],
+            "abstract": abstract,
+            "chapters": [c.model_dump() for c in chapters],
         }
-
-        for key, data in results:
-            final_content[key] = data
-
-        final_content = self._heal_keys(final_content)
-
-        print("[DONE] Report generation complete", flush=True)
-
-        return final_content

@@ -1,7 +1,6 @@
-// ai-report-generator/frontend/src/components/Navbar.js
-import React from 'react';
+// ai-report-generator/frontend/src/components/Navbar.jsx
 import { Link, useLocation } from 'react-router-dom';
-import { FileText, History, Github } from 'lucide-react';
+import { FileText, History } from 'lucide-react';
 
 const Navbar = () => {
   const location = useLocation();
@@ -11,9 +10,7 @@ const Navbar = () => {
     <nav className="sticky top-0 z-50 backdrop-blur-md bg-gradient-to-r from-blue-50/80 to-white/80 border-b border-blue-100">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
-
-          {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 group">
+          <Link to="/generate" className="flex items-center gap-2 group">
             <div className="p-2 rounded-xl bg-blue-100 group-hover:bg-blue-200 transition">
               <FileText className="h-6 w-6 text-blue-600" />
             </div>
@@ -22,10 +19,8 @@ const Navbar = () => {
             </span>
           </Link>
 
-          {/* Nav Links */}
           <div className="flex items-center gap-2">
-
-            {/* <Link
+            <Link
               to="/generate"
               className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
                 isActive('/generate')
@@ -34,8 +29,7 @@ const Navbar = () => {
               }`}
             >
               Generate
-            </Link> */}
-
+            </Link>
             <Link
               to="/history"
               className={`flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
@@ -47,17 +41,6 @@ const Navbar = () => {
               <History className="h-4 w-4" />
               History
             </Link>
-
-            {/* GitHub */}
-            <a
-              href="https://github.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-2 p-2 rounded-xl text-gray-500 hover:text-blue-600 hover:bg-blue-100 transition"
-            >
-              <Github className="h-5 w-5" />
-            </a>
-
           </div>
         </div>
       </div>
